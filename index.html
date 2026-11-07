@@ -131,20 +131,27 @@ tr.sit td { opacity: .5; }
 .qdlg h3 { font-size: 22px; font-weight: 600; text-transform: uppercase; margin: 0 0 8px; }
 .qdlg p { margin: 0 0 16px; color: var(--ink-2); font-size: 14px; line-height: 1.5; }
 .qdlg .row { display: flex; gap: 8px; justify-content: flex-end; }
+.cfs { display: flex; flex-wrap: wrap; gap: 6px; flex-basis: 100%; }
+.rk2 { display: block; font-size: 11px; font-weight: 600; opacity: .7; line-height: 1.1; }
+tr.grp td { background: var(--bg); text-align: left; white-space: normal; padding-top: 9px; font-weight: 600; }
+tr.grp td .dim { font-weight: 400; }
+td.vol { font-weight: 600; }
+.fcards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 520px), 1fr)); gap: 16px; }
 .foot { text-align: center; font-size: 12px; color: var(--ink-3); margin: 8px 16px 0; }
 </style>
 </head>
 <body>
 <div class="wrap">
   <div class="mast">
-    <div class="eyebrow">Power conferences · this season only</div>
+    <div class="eyebrow">Seven conferences · this season only</div>
     <h1>CBB Matchups</h1>
-    <p class="sub">Tonight's Big Ten, SEC, ACC, Big 12 and Big East matchups for threes, points, assists and rebounds. Grades show how far each matchup moves a player off his own baseline.</p>
+    <p class="sub">Tonight's Big Ten, SEC, ACC, Big 12, Big East, Pac-12 and Atlantic 10 matchups for threes, points, assists and rebounds. Grades show how far each matchup moves a player off his own baseline; every D1 team's games count toward the math.</p>
   </div>
   <div class="picker" id="picker"></div>
   <div class="bar">
     <div class="tabs" role="tablist">
       <button role="tab" data-tab="board">Board</button>
+      <button role="tab" data-tab="fun">Funnels</button>
       <button role="tab" data-tab="def">Defenses</button>
       <button role="tab" data-tab="quest">Questionable<span class="qcount" id="qcount"></span></button>
     </div>
@@ -224,7 +231,7 @@ tr.sit td { opacity: .5; }
 
   // ---------- state ----------
   const S = { idx: null, nid: null, doc: null, tab: ls.get("cbb-tab", "board"), stat: ls.get("cbb-stat", "3PM"), game: "all",
-    only: "all", sort: { k: "proj", d: -1 }, dsort: { k: "team", d: 1 }, edits: {}, sync: { pending: 0, err: "", at: null }, showNeg: false, flagTeam: "" };
+    confs: ls.get("cbb-confs", []), only: "all", sort: { k: "proj", d: -1 }, dsort: { k: "team", d: 1 }, edits: {}, sync: { pending: 0, err: "", at: null }, showNeg: false, flagTeam: "" };
   const ED = () => S.edits[S.nid] || (S.edits[S.nid] = {});
   let saveChain = Promise.resolve();
   function edit(fn) {
@@ -252,7 +259,25 @@ tr.sit td { opacity: .5; }
   const gameOf = (team) => (D().games || []).find((g) => g.home === team || g.away === team);
   const tipped = (g) => !!(g && g.start_utc && Date.now() >= Date.parse(g.start_utc));
   const gameLabel = (g) => `${g.away} ${g.neutral ? "vs" : "@"} ${g.home}`;
-  const inGame = (team) => S.game === "all" || (gameOf(team) || {}).game_id === +S.game;
+  const BOARD_CONFS = () => D().board_confs || ["Big Ten", "SEC", "ACC", "Big 12", "Big East", "Pac-12", "Atlantic 10"];
+  const teamRec = (team) => { const d = D(); if (!d._tm) d._tm = Object.fromEntries((d.teams || []).map((t) => [t.team, t])); return d._tm[team]; };
+  const groupOf = (team) => { const g = gameOf(team); if (g && (g.home_group !== undefined)) return g.home === team ? g.home_group : g.away_group; const t = teamRec(team); return t ? t.group : null; };
+  const confOf = (team) => { const g = gameOf(team), t = teamRec(team); return groupOf(team) || (t && t.conf) || (g ? (g.home === team ? g.home_conf : g.away_conf) : "") || ""; };
+  const inConf = (g) => !S.confs.length || !!(g && (S.confs.includes(g.home_group) || S.confs.includes(g.away_group)));
+  // ranks: among every D1 team with enough games, or only the selected conferences' teams
+  const minDef = () => D().settings.min_games_def;
+  function rankPool() { const all = (D().teams || []).filter((t) => t.games >= minDef()); return S.confs.length ? all.filter((t) => S.confs.includes(t.group)) : all; }
+  function rankOf(team, key, pool) {
+    const t = teamRec(team);
+    if (!t || t[key] == null || t.games < minDef()) return null;
+    const inPool = pool.some((x) => x.team === team);
+    return { r: 1 + pool.filter((x) => x.team !== team && x[key] > t[key]).length, n: pool.length + (inPool ? 0 : 1), out: !inPool };
+  }
+  const poolLabel = () => (S.confs.length ? `${S.confs.join(" + ")} teams` : "all D1 teams");
+  const ord = (n) => { const s = ["th", "st", "nd", "rd"], v = n % 100; return n + (s[(v - 20) % 10] || s[v] || s[0]); };
+  const rkTxt = (k) => (k ? `${ord(k.r)}${k.out ? "*" : ""}` : "–");
+  const visGames = () => (D().games || []).filter(inConf);
+  const inGame = (team) => { const g = gameOf(team); return !!g && inConf(g) && (S.game === "all" || g.game_id === +S.game); };
   const nameOf = (pid) => { const r = (D().rows || []).find((x) => x.athlete_id === pid); if (r) return r.name; for (const t in D().rosters || {}) { const p = D().rosters[t].find((x) => x.pid === pid); if (p) return p.name; } return pid; };
   const teamOfPid = (pid) => { const r = (D().rows || []).find((x) => x.athlete_id === pid); if (r) return r.team; for (const t in D().rosters || {}) if (D().rosters[t].some((x) => x.pid === pid)) return t; return ""; };
   // what the posted board did with a player: "out" (your call or missed games), "plays" (your call), or null
@@ -301,16 +326,18 @@ tr.sit td { opacity: .5; }
     const q = qList().filter((x) => !tipped(gameOf(x.team))).length;
     document.getElementById("qcount").textContent = q ? String(q) : "";
     renderPicker();
-    view().innerHTML = S.tab === "def" ? defHTML() : S.tab === "quest" ? questHTML() : boardHTML();
+    view().innerHTML = S.tab === "def" ? defHTML() : S.tab === "quest" ? questHTML() : S.tab === "fun" ? funHTML() : boardHTML();
     renderSync();
   }
   function renderPicker() {
     const n = S.idx.nights;
-    const gs = D().games || [];
+    const all = D().games || [], gs = visGames();
     const lockedAll = gs.length && gs.every(tipped);
+    const confs = BOARD_CONFS().map((c) => [c, all.filter((g) => g.home_group === c || g.away_group === c).length]);
     document.getElementById("picker").innerHTML = `
       <div class="field"><label for="night">Night</label><select id="night">${n.map((x) => `<option value="${esc(x.id)}"${x.id === S.nid ? " selected" : ""}>${esc(x.label)}</option>`).join("")}</select></div>
       <div class="gms" role="group" aria-label="Games"><button type="button" class="gm" data-game="all" aria-pressed="${S.game === "all"}">All ${gs.length} games</button>${gs.map((g) => `<button type="button" class="gm" data-game="${g.game_id}" aria-pressed="${S.game === String(g.game_id)}">${tipped(g) ? `<span class="lk">${LOCK}</span>` : ""}${esc(gameLabel(g))} <span class="dim">${esc(g.tip)}</span></button>`).join("")}</div>
+      <div class="cfs" role="group" aria-label="Conferences"><span class="eyebrow" style="align-self:center;margin-right:4px">Conferences</span><button type="button" class="gm" data-conf="all" aria-pressed="${!S.confs.length}">All</button>${confs.map(([c, n]) => `<button type="button" class="gm" data-conf="${esc(c)}" aria-pressed="${S.confs.includes(c)}"${n ? "" : " disabled"}>${esc(c)} <span class="dim">${n}</span></button>`).join("")}</div>
       <div class="stamp">${lockedAll ? `<span class="lock">${LOCK}Locked at tip</span>` : ""}<span>Built ${esc(new Date(D().generated_utc).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }))}</span><span class="dim">Games through ${esc(D().data_through)}</span></div>`;
   }
   function whyText(stat, d) {
@@ -327,9 +354,10 @@ tr.sit td { opacity: .5; }
     const graded = all.filter((r) => r.grade !== "OUT" && r.grade !== "NEG");
     const neg = all.filter((r) => r.grade === "NEG"), outs = all.filter((r) => r.grade === "OUT");
     let rows = graded.filter((r) => S.only === "all" || ["A+", "A"].includes(r.grade));
-    const val = (r, k) => (k === "proj" ? r.proj + r.add : k === "min" ? (r.min || 0) + r.addMin : k === "grade" ? GRADE_T[r.grade] ?? -1 : k === "name" ? r.name : r[k]);
+    const val = (r, k) => (k === "proj" ? r.proj + r.add : k === "min" ? (r.min || 0) + r.addMin : k === "grade" ? GRADE_T[r.grade] ?? -1 : k === "name" ? r.name : k === "conf" ? r.conf : r[k]);
+    rows.forEach((r) => (r.conf = confOf(r.team)));
     const { k, d } = S.sort;
-    rows.sort((a, b) => (a.sitting - b.sitting) || (k === "name" ? d * String(a.name).localeCompare(b.name) : d * ((val(a, k) ?? -9) - (val(b, k) ?? -9))) || (val(b, "proj") - val(a, "proj")));
+    rows.sort((a, b) => (a.sitting - b.sitting) || (k === "name" || k === "conf" ? d * String(val(a, k)).localeCompare(val(b, k)) : d * ((val(a, k) ?? -9) - (val(b, k) ?? -9))) || (val(b, "proj") - val(a, "proj")));
     const cuts = (D().grade_cuts || {})[st] || [];
     const span = Math.max(0.05, Math.abs((cuts[0] || [0.12])[0]));
     const anyTest = rows.some((r) => r.add || r.sitting);
@@ -341,11 +369,11 @@ tr.sit td { opacity: .5; }
       const bump = r.add ? ` <span class="up" title="From teammates you're testing out">${r.add > 0 ? "+" : "−"}${f1(Math.abs(r.add))}</span>` : "";
       return `<tr${r.sitting ? ' class="sit"' : ""}><td class="rk">${i + 1}</td>
         <td class="pl">${esc(r.name)}${tag}<small>${esc(r.detail.pos || "")} · ${esc(r.team)} ${r.site === "home" ? "vs" : r.site === "away" ? "@" : "vs"} ${esc(r.opp)}${lk ? " · locked" : ""}</small></td>
-        <td>${f1(min)}</td><td><b>${f2(proj)}</b>${bump}</td><td class="mut">${f2(r.base)}</td>
+        <td class="l mut">${esc(r.conf)}</td><td>${f1(min)}</td><td><b>${f2(proj)}</b>${bump}</td><td class="mut">${f2(r.base)}</td>
         <td class="h" style="background:${heat(0.5 + Math.max(-1, Math.min(1, r.boost / span)) * 0.5)}">${signed(r.boost)}</td>
         <td>${chip(r.grade)}</td><td class="why">${whyText(st, r.detail)}</td></tr>`;
     }).join("");
-    const head = `<tr><th class="rk">#</th>${th("name", "Player", "pl")}${th("min", "Min", "", "Projected minutes")}${th("proj", "Proj", "", `Projected ${UNIT[st]} tonight`)}${th("base", "Base", "", `His ${UNIT[st]} at these minutes against an average defense`)}${th("boost", "Edge", "", "How far this matchup moves him off his base")}${th("grade", "Grade", "", "Percentile of this season's matchups: A+ top 5%, A next 7%, B 18%, C middle 40%, D 18%, F bottom 12%")}<th class="l">Why</th></tr>`;
+    const head = `<tr><th class="rk">#</th>${th("name", "Player", "pl")}${th("conf", "Conf", "l", "His team's conference: click to group the board by conference")}${th("min", "Min", "", "Projected minutes")}${th("proj", "Proj", "", `Projected ${UNIT[st]} tonight`)}${th("base", "Base", "", `His ${UNIT[st]} at these minutes against an average defense`)}${th("boost", "Edge", "", "How far this matchup moves him off his base")}${th("grade", "Grade", "", "Percentile of this season's matchups: A+ top 5%, A next 7%, B 18%, C middle 40%, D 18%, F bottom 12%")}<th class="l">Why</th></tr>`;
     const cutTxt = cuts.length ? `Grade cutoffs tonight: ${cuts.slice(0, 5).map(([c, gr]) => `${gr} ${signed(c, 1)}`).join(" · ")}.` : "Grade cutoffs need more games: until then everything shows as not graded.";
     const empty = !graded.length ? `<div class="empty"><p>${(D().rows || []).length ? "No graded players in this view yet." : "Nothing to grade yet."} Defenses need ${D().settings.min_games_def} games and players ${D().settings.min_games_player} before they're graded.</p></div>` : "";
     return `<section class="card"><header><h3>${esc(st === "3PM" ? "Threes made" : st === "PTS" ? "Points" : st === "AST" ? "Assists" : "Rebounds")}</h3>
@@ -358,38 +386,95 @@ tr.sit td { opacity: .5; }
         <span class="dim">Players need ${D().settings.min_games_player}+ games and 8+ minutes a game; defenses need ${D().settings.min_games_def}+ games. Each game is weighted by opponent strength and compared with what that opponent usually does.</span></div></section>`;
   }
   function defHTML() {
-    const L = D().league || {};
-    const teams = (D().defenses || []).filter((t) => inGame(t.team));
-    const rat = Object.fromEntries((D().ratings || []).map((r) => [r.team, r]));
-    const cols = [["games", "G", null, "Games played"], ["net", "Net", null, "Opponent-adjusted net rating (points per 100 possessions)"], ["pace", "Pace", "pace", "Possessions per game vs. D1 average"],
-      ["fg3a", "3PA", 1, "Threes allowed vs. what opponents usually take"], ["fg3pct", "3P%", 1, "3-point % allowed vs. opponents' usual"], ["corner_sh", "Corner", 1, "Share of allowed threes from the corners vs. usual"],
-      ["rim_a", "Rim tries", 1, ""], ["rim_pct", "Rim FG%", 1, ""], ["mid_a", "Mid tries", 1, ""], ["fta", "FTA", 1, ""], ["ast", "AST", 1, "Assists allowed"], ["orb_pct", "O-boards", 1, "Offensive rebound % allowed"]];
-    const v = (t, k) => (k === "net" ? (rat[t.team] || {}).net : k === "pace" ? t.pace / (L.pace || t.pace) : t[k]);
+    const teams = visGames().filter((g) => S.game === "all" || String(g.game_id) === S.game).flatMap((g) => [g.away, g.home]).map(teamRec).filter(Boolean);
+    const pool = rankPool();
+    const corner = D().corner_split;
+    const cols = [["net", "Net", "Opponent-adjusted net rating (points per 100 possessions); rank 1st = best team"], ["pace", "Pace", "Possessions vs. D1 average; 1st = fastest"],
+      ["fg3a", "3PA", "Threes allowed vs. what opponents usually take"], ...(corner ? [["corner_vol", "Corner 3s", "Corner threes allowed vs. usual"], ["atb_vol", "Above-break 3s", "Above-the-break threes allowed vs. usual"]] : []),
+      ["fg3pct", "3P%", "3-point % allowed vs. usual"], ["rim_a", "Rim tries", "Rim attempts allowed vs. usual"], ["rim_pct", "Rim FG%", ""], ["mid_a", "Mid tries", ""],
+      ["fta", "FTA", "Free throws allowed vs. usual"], ["ast", "AST", "Assists allowed vs. usual"], ["orb_pct", "O-boards", "Offensive rebound % allowed vs. usual"], ["dreb_ch", "D-board chances", "Misses his opponents give his team to rebound, vs. average"]];
     const { k, d } = S.dsort;
-    teams.sort((a, b) => (k === "team" ? d * a.team.localeCompare(b.team) : d * ((v(a, k) ?? 0) - (v(b, k) ?? 0))));
-    const head = `<tr><th class="pl" data-dsort="team">Defense</th>${cols.map(([key, lab, , tip]) => `<th data-dsort="${key}"${S.dsort.k === key ? ` aria-sort="x"` : ""}${tip ? ` title="${esc(tip)}"` : ""}>${lab}</th>`).join("")}</tr>`;
+    teams.sort((a, b) => (k === "team" ? d * a.team.localeCompare(b.team) : d * ((a[k] ?? 0) - (b[k] ?? 0))));
+    const head = `<tr><th class="pl" data-dsort="team">Defense</th><th data-dsort="games">G</th>${cols.map(([key, lab, tip]) => `<th data-dsort="${key}"${S.dsort.k === key ? ` aria-sort="x"` : ""}${tip ? ` title="${esc(tip)}"` : ""}>${lab}</th>`).join("")}</tr>`;
     const body = teams.map((t) => {
       const g = gameOf(t.team), opp = g ? (g.home === t.team ? g.away : g.home) : "";
-      const thin = t.games < D().settings.min_games_def;
-      return `<tr><td class="pl">${esc(t.team)}<small>vs ${esc(opp)}${thin ? " · not graded yet" : ""}</small></td>` + cols.map(([key, , kind]) => {
-        const x = v(t, key);
-        if (key === "games") return `<td>${t.games}</td>`;
-        if (key === "net") return `<td>${x == null ? "–" : (x > 0 ? "+" : "") + x.toFixed(1)}</td>`;
-        return `<td class="h" style="background:${heat(relT(x, key === "pace" ? 0.08 : 0.25))}">${rel(x)}</td>`;
+      const thin = t.games < minDef();
+      return `<tr><td class="pl">${esc(t.team)}<small>${esc(confOf(t.team))} · vs ${esc(opp)}${thin ? " · not ranked yet" : ""}</small></td><td>${t.games}</td>` + cols.map(([key]) => {
+        const x = t[key], rk = rankOf(t.team, key, pool);
+        const tip = rk ? `${ord(rk.r)} of ${rk.n} among ${poolLabel()}${rk.out ? " (not in the selected conferences: where it would rank)" : ""}` : "";
+        if (key === "net") return `<td title="${esc(tip)}">${x == null ? "–" : (x > 0 ? "+" : "") + x.toFixed(1)}<span class="rk2">${rkTxt(rk)}</span></td>`;
+        return `<td class="h" title="${esc(tip)}" style="background:${heat(relT(x, key === "pace" ? 0.08 : 0.25))}">${rel(x)}<span class="rk2">${rkTxt(rk)}</span></td>`;
       }).join("") + `</tr>`;
     }).join("");
     return `<section class="card"><header><h3>Tonight's defenses</h3></header>
-      <p class="cap">What each defense allows compared with what its opponents usually do (+ means it gives up more, green is good for the offense). Games are weighted by opponent strength and lightly regressed, more so for shooting percentages, which are mostly noise early on.</p>
+      <p class="cap">What each defense allows compared with what its opponents usually do (+ means it gives up more, green is good for the offense). The small number is its rank among <b>${esc(poolLabel())}</b>: 1st gives up the most. ${S.confs.length ? "* = a non-conference opponent, ranked where it would fall among these teams." : "Pick conferences above to rank within them instead."} Teams need ${minDef()} games to be ranked; every team's games count toward the math either way.</p>
       <div class="scroll"><table><thead>${head}</thead><tbody>${body}</tbody></table></div></section>`;
+  }
+  // ---------- Funnels: the defenses that give up the most in each category, and the opposing players who fit ----------
+  const FUN = [
+    { id: "fg3a", label: "Threes", key: "fg3a", vol: "tpa", thr: 4, unit: "3PA", stat: "3PM", fit: true },
+    { id: "corner", label: "Corner threes", key: "corner_vol", vol: "c3", thr: 1.2, unit: "corner 3PA", stat: "3PM", fit: true, corner: true },
+    { id: "atb", label: "Above-the-break threes", key: "atb_vol", vol: "atb", thr: 3, unit: "above-break 3PA", stat: "3PM", fit: true, corner: true },
+    { id: "rim", label: "Rim attempts", key: "rim_a", vol: "rim", thr: 4, unit: "rim tries", stat: "PTS", fit: true },
+    { id: "mid", label: "Mid-range attempts", key: "mid_a", vol: "mid", thr: 3, unit: "mid tries", stat: "PTS", fit: true },
+    { id: "fta", label: "Free throws", key: "fta", vol: "fta", thr: 4, unit: "FTA", stat: "PTS", fit: true },
+    { id: "ast", label: "Assists", key: "ast", vol: "ast", thr: 3, unit: "AST", stat: "AST", fit: false },
+    { id: "oreb", label: "Offensive boards", key: "orb_pct", vol: "oreb", thr: 2, unit: "OREB", stat: "REB", fit: false },
+    { id: "dreb", label: "Defensive-board chances", key: "dreb_ch", vol: "dreb", thr: 5, unit: "DREB", stat: "REB", fit: false },
+  ];
+  function funData() {
+    const pool = rankPool(), cut = Math.max(3, Math.round(pool.length / 6));
+    const outs = pageOuts();
+    const info = {};
+    (D().rows || []).forEach((r) => { const x = info[r.athlete_id] || (info[r.athlete_id] = { name: r.name, team: r.team, opp: r.opp, st: {} }); x.st[r.stat] = r; });
+    const games = visGames().filter((g) => S.game === "all" || String(g.game_id) === S.game);
+    const cats = FUN.filter((c) => !c.corner || D().corner_split).map((c) => {
+      const entries = [];
+      games.forEach((g) => [[g.home, g.away], [g.away, g.home]].forEach(([def, off]) => {
+        const rk = rankOf(def, c.key, pool);
+        if (!rk || rk.r > cut) return;
+        const players = Object.entries(D().vols || {}).filter(([pid, v]) => info[pid] && info[pid].team === off && !outs.has(pid) && v[c.vol] >= c.thr)
+          .map(([pid, v]) => ({ pid, v, x: info[pid] })).sort((a, b) => b.v[c.vol] - a.v[c.vol]);
+        entries.push({ def, off, rk, val: teamRec(def)[c.key], players });
+      }));
+      entries.sort((a, b) => a.rk.r - b.rk.r);
+      return { c, entries };
+    });
+    return { pool, cut, cats, info };
+  }
+  function funHTML() {
+    const { cut, cats } = funData();
+    const gradeCell = (p, st) => { const r = p.x.st[st]; return r && r.grade !== "NEG" && r.grade !== "OUT" ? `${f1(r.proj)} ${chip(r.grade)}` : `<span class="dim">–</span>`; };
+    // Top fits: shot-type funnels only (like the NBA board): weakness (1st counts most) x how far he clears the bar (up to double)
+    const fits = {};
+    cats.filter((k) => k.c.fit).forEach(({ c, entries }) => entries.forEach((e) => e.players.forEach((p) => {
+      const f = fits[p.pid] || (fits[p.pid] = { p, score: 0, hits: [] });
+      f.score += (1 - (e.rk.r - 1) / cut) * Math.min(2, p.v[c.vol] / c.thr);
+      f.hits.push(`${c.label.toLowerCase()} (${e.def} ${ord(e.rk.r)})`);
+    })));
+    const top = Object.values(fits).sort((a, b) => b.hits.length - a.hits.length || b.score - a.score).slice(0, 15);
+    const topCard = `<section class="card"><header><h3>Top fits</h3><span class="eyebrow">Ranks among ${esc(poolLabel())} · top ${cut} count</span></header>
+      <p class="cap">The players who show up in the most of tonight's shot-type funnels (assist and rebound funnels aren't counted), then by how well they fit: each funnel scores the defense's weakness (1st counts most) times how far he clears that category's bar (up to double). Players you've ruled out or are testing out drop off.</p>
+      ${top.length ? `<div class="scroll"><table><thead><tr><th class="rk">#</th><th class="pl">Player</th><th>Funnels</th><th>Fit</th><th>3PM</th><th>PTS</th><th class="l">Where</th></tr></thead><tbody>${top.map((f, i) => `<tr><td class="rk">${i + 1}</td><td class="pl">${esc(f.p.x.name)}<small>${esc(f.p.x.team)} vs ${esc(f.p.x.opp)}</small></td><td><b>${f.hits.length}</b></td><td>${f2(f.score)}</td><td>${gradeCell(f.p, "3PM")}</td><td>${gradeCell(f.p, "PTS")}</td><td class="why">${esc(f.hits.join(" · "))}</td></tr>`).join("")}</tbody></table></div>`
+        : `<div class="empty"><p>No shot-type funnels with qualifying players in this view${(D().teams || []).some((t) => t.games >= minDef()) ? "" : ": teams need " + minDef() + " games before they're ranked"}.</p></div>`}</section>`;
+    const cards = cats.map(({ c, entries }) => {
+      const body = entries.map((e) => `<tr class="grp"><td colspan="4">${ord(e.rk.r)}${e.rk.out ? "*" : ""} · ${esc(e.def)} <span class="dim">${esc(confOf(e.def))} · allows ${rel(e.val)} · vs ${esc(e.off)}</span></td></tr>`
+        + (e.players.length ? e.players.map((p) => `<tr><td class="pl">${esc(p.x.name)}${(ED().q || {})[p.pid] ? `<span class="flag">Q</span>` : ""}<small>${esc(p.x.team)} · ${f1(p.v.min)} min</small></td><td class="vol">${f1(p.v[c.vol])}</td><td>${gradeCell(p, c.stat)}</td><td class="mut">${esc(c.stat)}</td></tr>`).join("")
+          : `<tr><td colspan="4" class="mut" style="text-align:left">No ${esc(e.off)} player projects ${c.thr}+ ${esc(c.unit)} tonight.</td></tr>`)).join("");
+      return `<section class="card"><header><h3>${esc(c.label)}</h3><span class="eyebrow">${entries.length} defense${entries.length === 1 ? "" : "s"}</span></header>
+        <p class="cap">Tonight's defenses in the top ${cut} of ${esc(poolLabel())} for ${esc(c.label.toLowerCase())} allowed, and the opposing players projected for ${c.thr}+ ${esc(c.unit)}.${S.confs.length ? " * = non-conference opponent, ranked where it would fall." : ""}</p>
+        ${entries.length ? `<div class="scroll"><table><thead><tr><th class="pl">Player</th><th>${esc(c.unit)}/g</th><th>Tonight</th><th></th></tr></thead><tbody>${body}</tbody></table></div>` : `<div class="empty"><p>No defense on tonight's slate ranks in the top ${cut} here.</p></div>`}</section>`;
+    }).join("");
+    return topCard + `<div class="fcards">${cards}</div>`;
   }
   function questHTML() {
     const all = qList();
     const head = `<section class="card"><header><h3>Questionable</h3><span class="syncnote"></span></header>
       <p class="cap">College has no league injury report, so this list is yours: players you flag, players you've made a call on, and anyone the board already has out because he missed his team's last 2 games. Flagged players are assumed to play until you confirm otherwise.</p>
       <p class="cap"><b>Test</b> tries him sitting: the board shows his teammates' bumps, but nothing is posted or graded. <b>Confirm</b> makes it official: the next run on your Mac posts it and grades with it. You can undo a confirmation until the game tips.</p>
-      <div class="flagbar"><select id="flagTeam" aria-label="Team"><option value="">Flag a player: pick a team</option>${(D().games || []).filter((g) => !tipped(g)).flatMap((g) => [g.away, g.home]).map((t) => `<option${t === S.flagTeam ? " selected" : ""}>${esc(t)}</option>`).join("")}</select>
+      <div class="flagbar"><select id="flagTeam" aria-label="Team"><option value="">Flag a player: pick a team</option>${visGames().filter((g) => !tipped(g)).flatMap((g) => [g.away, g.home]).map((t) => `<option${t === S.flagTeam ? " selected" : ""}>${esc(t)}</option>`).join("")}</select>
       ${S.flagTeam ? `<select id="flagPid" aria-label="Player">${((D().rosters || {})[S.flagTeam] || []).filter((p) => p.mpg >= 3).map((p) => `<option value="${esc(p.pid)}">${esc(p.name)} (${esc(p.pos)}, ${f1(p.mpg)} min)</option>`).join("")}</select><button type="button" class="btn sm" data-flag>Flag Q</button>` : ""}</div></section>`;
-    const games = (D().games || []).filter((g) => S.game === "all" || String(g.game_id) === S.game);
+    const games = visGames().filter((g) => S.game === "all" || String(g.game_id) === S.game);
     const outs = pageOuts();
     const cards = games.map((g) => {
       const xs = all.filter((x) => x.team === g.away || x.team === g.home);
@@ -431,8 +516,15 @@ tr.sit td { opacity: .5; }
     if (ds.tab) { S.tab = ds.tab; ls.set("cbb-tab", S.tab); render(); }
     else if (ds.stat) { S.stat = ds.stat; ls.set("cbb-stat", S.stat); render(); }
     else if (ds.game) { S.game = ds.game; render(); }
+    else if (ds.conf) {
+      if (ds.conf === "all") S.confs = [];
+      else S.confs = S.confs.includes(ds.conf) ? S.confs.filter((c) => c !== ds.conf) : [...S.confs, ds.conf];
+      ls.set("cbb-confs", S.confs);
+      const g = (D().games || []).find((x) => String(x.game_id) === S.game); if (!inConf(g)) S.game = "all";
+      render();
+    }
     else if (ds.only) { S.only = ds.only; render(); }
-    else if (ds.sort) { S.sort = S.sort.k === ds.sort ? { k: ds.sort, d: -S.sort.d } : { k: ds.sort, d: ds.sort === "name" ? 1 : -1 }; render(); }
+    else if (ds.sort) { S.sort = S.sort.k === ds.sort ? { k: ds.sort, d: -S.sort.d } : { k: ds.sort, d: ds.sort === "name" || ds.sort === "conf" ? 1 : -1 }; render(); }
     else if (ds.dsort) { S.dsort = S.dsort.k === ds.dsort ? { k: ds.dsort, d: -S.dsort.d } : { k: ds.dsort, d: ds.dsort === "team" ? 1 : -1 }; render(); }
     else if ("neg" in ds) { S.showNeg = !S.showNeg; render(); }
     else if ("signin" in ds) { const v = (window.prompt("Paste your GitHub token (it stays on this device only):") || "").trim(); if (v) { try { localStorage.setItem("cbb-gh-token", v); } catch (x) {} location.reload(); } }
@@ -452,6 +544,7 @@ tr.sit td { opacity: .5; }
   });
   document.addEventListener("change", (e) => {
     if (e.target.id === "night") { load(e.target.value); }
+
     if (e.target.id === "flagTeam") { S.flagTeam = e.target.value; render(); }
   });
 
